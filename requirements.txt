@@ -1,0 +1,14 @@
+torch>=2.1
+torchvision>=0.16
+numpy>=1.26
+scipy>=1.11
+scikit-learn>=1.3
+scikit-image>=0.22
+opencv-python>=4.8
+Pillow>=10.0
+tqdm>=4.66
+timm>=0.9
+matplotlib>=3.8
+wandb>=0.16
+torch_topological>=0.1.7
+fvcore>=0.1.5
