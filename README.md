@@ -112,13 +112,13 @@ Run TopoDistill pretraining:
 python train_dino.py --epochs 300 --bsize 8 --lrate 0.0001
 ```
 
-The pseudo-mask weight is linearly warmed up for the first 20 epochs and a two-pixel uncertain boundary band is ignored by default. W&B qualitative samples are logged once per 50 processed training images. These settings can be changed without editing code:
+The pseudo-mask weight is linearly warmed up for the first 20 epochs and a two-pixel uncertain boundary band is ignored by default. Losses, weights, schedules, and train/validation metrics are recorded at every epoch. Every 25 epochs, W&B additionally records the original image, two student global crops, four student local crops, two teacher global crops, both aligned pseudo masks, and both auxiliary probability/binary predictions. The same qualitative snapshot records output entropies, embedding standard deviation, DINO-center norm, gradient norm, and foreground fractions. These settings can be changed without editing code:
 
 ```bash
 export TOPODISTILL_PSEUDO_WEIGHT=1.0
 export TOPODISTILL_PSEUDO_WARMUP_EPOCHS=20
 export TOPODISTILL_BOUNDARY_IGNORE_RADIUS=2
-export TOPODISTILL_WANDB_IMAGE_INTERVAL=50
+export TOPODISTILL_WANDB_VIS_EPOCH_INTERVAL=25
 export TOPODISTILL_ENABLE_GT_MONITOR=false
 ```
 

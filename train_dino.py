@@ -117,12 +117,16 @@ def pseudo_segmentation_loss(logits, target, boundary_ignore_radius=2):
     return bce + dice_loss
 
 
-def compute_batch_iou(pred_logits, target_masks):
-    predictions = (torch.sigmoid(pred_logits) > 0.5).float().flatten(1)
+def compute_binary_mask_iou(pred_masks, target_masks):
+    predictions = (pred_masks > 0.5).float().flatten(1)
     targets = (target_masks > 0.5).float().flatten(1)
     intersection = (predictions * targets).sum(dim=1)
     union = predictions.sum(dim=1) + targets.sum(dim=1) - intersection
     return ((intersection + 1e-6) / (union + 1e-6)).sum().item()
+
+
+def compute_batch_iou(pred_logits, target_masks):
+    return compute_binary_mask_iou(torch.sigmoid(pred_logits), target_masks)
 
 
 def denormalize(image):
@@ -146,6 +150,13 @@ def main():
         data,
         use_pseudo_supervision,
     )
+    # All curves and qualitative snapshots use epoch as their x-axis.
+    wandb.define_metric("epoch")
+    wandb.define_metric("train/*", step_metric="epoch")
+    wandb.define_metric("validation/*", step_metric="epoch")
+    wandb.define_metric("schedule/*", step_metric="epoch")
+    wandb.define_metric("snapshot/*", step_metric="epoch")
+    wandb.define_metric("samples/*", step_metric="epoch")
 
     def create_loader(loader_operation):
         return loader(
@@ -205,10 +216,9 @@ def main():
     boundary_ignore_radius = max(
         0, int(os.environ.get("TOPODISTILL_BOUNDARY_IGNORE_RADIUS", "2"))
     )
-    wandb_image_interval = max(
-        0, int(os.environ.get("TOPODISTILL_WANDB_IMAGE_INTERVAL", "50"))
+    wandb_visualization_epoch_interval = max(
+        0, int(os.environ.get("TOPODISTILL_WANDB_VIS_EPOCH_INTERVAL", "25"))
     )
-    wandb_images_seen = 0
 
     checkpoint_path = os.path.join(folder_path, student.__class__.__name__ + result_name)
     print(
@@ -221,48 +231,145 @@ def main():
         f"maximum weight={pseudo_weight_max}, warm-up={pseudo_warmup_epochs} epochs"
     )
 
-    def maybe_log_training_image(
+    def maybe_log_training_snapshot(
         paths,
         original_images,
         student_views,
+        teacher_views,
+        student_features,
+        student_outputs,
+        teacher_outputs,
         pseudo_targets,
         segmentation_logits,
-        previous_count,
-        current_count,
+        real_targets,
+        scalar_metrics,
+        epoch_index,
+        batch_index,
     ):
-        if wandb_image_interval == 0:
+        if wandb_visualization_epoch_interval == 0:
             return
-        if previous_count // wandb_image_interval == current_count // wandb_image_interval:
+        epoch_number = epoch_index + 1
+        if epoch_number % wandb_visualization_epoch_interval != 0 or batch_index != 0:
             return
 
         sample_index = 0
+        def crop_image(view, caption):
+            image = (
+                denormalize(view[sample_index].detach())
+                .permute(1, 2, 0)
+                .cpu()
+                .numpy()
+            )
+            return wandb.Image(image, caption=caption)
+
+        def mask_image(mask, caption):
+            image = mask[sample_index].detach().squeeze(0).cpu().numpy()
+            return wandb.Image(image, caption=caption)
+
+        student_global = [
+            crop_image(view, f"student global {index + 1}")
+            for index, view in enumerate(student_views[:2])
+        ]
+        student_local = [
+            crop_image(view, f"student local {index + 1}")
+            for index, view in enumerate(student_views[2:])
+        ]
+        teacher_global = [
+            crop_image(view, f"teacher global {index + 1}")
+            for index, view in enumerate(teacher_views)
+        ]
+        pseudo_images = [
+            mask_image(mask, f"pseudo target for global {index + 1}")
+            for index, mask in enumerate(pseudo_targets)
+        ]
+        probability_images = [
+            mask_image(torch.sigmoid(logits), f"aux probability for global {index + 1}")
+            for index, logits in enumerate(segmentation_logits)
+        ]
+        binary_prediction_images = [
+            mask_image(
+                (torch.sigmoid(logits) > 0.5).float(),
+                f"aux binary prediction for global {index + 1}",
+            )
+            for index, logits in enumerate(segmentation_logits)
+        ]
+
         original = original_images[sample_index].permute(1, 2, 0).cpu().numpy()
-        crop = (
-            denormalize(student_views[0][sample_index].detach())
-            .permute(1, 2, 0)
-            .cpu()
-            .numpy()
-        )
-        pseudo = pseudo_targets[0][sample_index].permute(1, 2, 0).detach().cpu().numpy()
-        prediction = (
-            torch.sigmoid(segmentation_logits[0][sample_index])
-            .permute(1, 2, 0)
-            .detach()
-            .cpu()
-            .numpy()
-        )
-        wandb.log(
+        with torch.no_grad():
+            student_probabilities = [
+                F.softmax(output / dino_loss_fn.student_temp, dim=-1)
+                for output in student_outputs
+            ]
+            teacher_probabilities = [
+                F.softmax(
+                    (output - dino_loss_fn.center.to(output.device))
+                    / scalar_metrics["snapshot/teacher_temperature"],
+                    dim=-1,
+                )
+                for output in teacher_outputs
+            ]
+            student_entropy = torch.stack(
+                [
+                    -(probability * probability.clamp_min(1e-12).log())
+                    .sum(dim=-1)
+                    .mean()
+                    for probability in student_probabilities
+                ]
+            ).mean()
+            teacher_entropy = torch.stack(
+                [
+                    -(probability * probability.clamp_min(1e-12).log())
+                    .sum(dim=-1)
+                    .mean()
+                    for probability in teacher_probabilities
+                ]
+            ).mean()
+            normalized_embedding = F.normalize(
+                student_features[0].mean(dim=(2, 3)), dim=-1
+            )
+            embedding_std = normalized_embedding.std(dim=0, unbiased=False).mean()
+            target_foreground = torch.stack(
+                [target.float().mean() for target in pseudo_targets]
+            ).mean()
+            predicted_foreground = torch.stack(
+                [
+                    (torch.sigmoid(logits) > 0.5).float().mean()
+                    for logits in segmentation_logits
+                ]
+            ).mean()
+
+        scalar_metrics.update(
             {
-                "SSL sample/original": wandb.Image(original, caption=str(paths[sample_index])),
-                "SSL sample/global crop": wandb.Image(crop),
-                "SSL sample/pseudo target": wandb.Image(pseudo),
-                "SSL sample/auxiliary probability": wandb.Image(prediction),
-                "SSL sample/images seen": current_count,
+                "snapshot/student_output_entropy": student_entropy.item(),
+                "snapshot/teacher_output_entropy": teacher_entropy.item(),
+                "snapshot/student_embedding_std": embedding_std.item(),
+                "snapshot/dino_center_norm": dino_loss_fn.center.norm().item(),
+                "snapshot/pseudo_foreground_fraction": target_foreground.item(),
+                "snapshot/predicted_foreground_fraction": predicted_foreground.item(),
             }
         )
+        log_payload = {
+            "epoch": epoch_number,
+            "samples/original": wandb.Image(
+                original,
+                caption=f"{paths[sample_index]} | epoch={epoch_number}",
+            ),
+            "samples/student_global_crops": student_global,
+            "samples/student_local_crops": student_local,
+            "samples/teacher_global_crops": teacher_global,
+            "samples/pseudo_targets": pseudo_images,
+            "samples/auxiliary_probabilities": probability_images,
+            "samples/auxiliary_binary_predictions": binary_prediction_images,
+        }
+        if real_targets is not None:
+            log_payload["samples/real_masks_diagnostic"] = [
+                mask_image(mask, f"real mask for global {index + 1}")
+                for index, mask in enumerate(real_targets)
+            ]
+        log_payload.update(scalar_metrics)
+        wandb.log(log_payload)
 
     def run_epoch(data_loader, epoch_index, momentum, pseudo_weight, training):
-        nonlocal wandb_images_seen
         student.train(training)
         student_head.train(training)
         segmentation_head.train(training)
@@ -271,20 +378,26 @@ def main():
         if monitor_head is not None:
             monitor_head.train(training)
 
-        totals = {"combined": 0.0, "dino": 0.0, "pseudo": 0.0, "monitor": 0.0}
+        totals = {
+            "combined": 0.0,
+            "dino": 0.0,
+            "pseudo": 0.0,
+            "pseudo_fit_iou": 0.0,
+            "monitor": 0.0,
+        }
         monitor_iou_sum = 0.0
         sample_count = 0
         teacher_temperature = get_teacher_temp(epoch_index)
 
         with torch.set_grad_enabled(training):
-            for (
-                original_images,
-                paths,
-                cropped_real_masks,
-                student_views,
-                teacher_views,
-                pseudo_masks,
-            ) in data_loader:
+            for batch_index, (
+                    original_images,
+                    paths,
+                    cropped_real_masks,
+                    student_views,
+                    teacher_views,
+                    pseudo_masks,
+            ) in enumerate(data_loader):
                 student_views = [view.to(device, non_blocking=True) for view in student_views]
                 teacher_views = [view.to(device, non_blocking=True) for view in teacher_views]
                 pseudo_targets = [mask.to(device, non_blocking=True) for mask in pseudo_masks]
@@ -317,10 +430,13 @@ def main():
                 ).mean()
                 combined_loss = dino_loss + pseudo_weight * pseudo_loss
 
+                gradient_norm = float("nan")
                 if training:
                     optimizer.zero_grad(set_to_none=True)
                     combined_loss.backward()
-                    clip_grad_norm_(trainable_parameters, max_norm=3.0)
+                    gradient_norm = float(
+                        clip_grad_norm_(trainable_parameters, max_norm=3.0).item()
+                    )
                     optimizer.step()
                     update_teacher(student, teacher, momentum)
                     update_teacher(student_head, teacher_head, momentum)
@@ -331,28 +447,82 @@ def main():
                 totals["dino"] += dino_loss.item() * batch_size
                 totals["pseudo"] += pseudo_loss.item() * batch_size
 
+                pseudo_fit_iou = sum(
+                    compute_batch_iou(logits, target)
+                    for logits, target in zip(segmentation_logits, pseudo_targets)
+                ) / (batch_size * len(pseudo_targets))
+                totals["pseudo_fit_iou"] += pseudo_fit_iou * batch_size
+
+                real_targets = None
+                monitor_loss_value = float("nan")
+                monitor_iou_value = float("nan")
+                pseudo_real_iou = float("nan")
                 if monitor_head is not None:
-                    real_target = cropped_real_masks[0].to(device, non_blocking=True)
+                    real_targets = [
+                        mask.to(device, non_blocking=True) for mask in cropped_real_masks
+                    ]
+                    real_target = real_targets[0]
                     monitor_logits = monitor_head(student_features[0].detach())
                     monitor_loss = F.binary_cross_entropy_with_logits(monitor_logits, real_target)
+                    monitor_loss_value = monitor_loss.item()
                     if training:
                         monitor_optimizer.zero_grad(set_to_none=True)
                         monitor_loss.backward()
                         monitor_optimizer.step()
                     totals["monitor"] += monitor_loss.item() * batch_size
-                    monitor_iou_sum += compute_batch_iou(monitor_logits, real_target)
+                    monitor_iou_sum_batch = compute_batch_iou(monitor_logits, real_target)
+                    monitor_iou_sum += monitor_iou_sum_batch
+                    monitor_iou_value = monitor_iou_sum_batch / batch_size
+                    pseudo_real_iou = sum(
+                        compute_binary_mask_iou(pseudo, real)
+                        for pseudo, real in zip(pseudo_targets, real_targets)
+                    ) / (batch_size * len(pseudo_targets))
 
                 if training:
-                    previous_count = wandb_images_seen
-                    wandb_images_seen += batch_size
-                    maybe_log_training_image(
+                    running_denominator = max(sample_count, 1)
+                    scalar_metrics = {
+                        "snapshot/combined_loss": combined_loss.item(),
+                        "snapshot/dino_loss": dino_loss.item(),
+                        "snapshot/pseudo_loss": pseudo_loss.item(),
+                        "snapshot/weighted_pseudo_loss": pseudo_weight
+                        * pseudo_loss.item(),
+                        "snapshot/pseudo_contribution_fraction": (
+                            pseudo_weight * pseudo_loss.item()
+                        )
+                        / max(combined_loss.item(), 1e-12),
+                        "snapshot/pseudo_fit_iou": pseudo_fit_iou,
+                        "snapshot/running_combined_loss": totals["combined"]
+                        / running_denominator,
+                        "snapshot/running_dino_loss": totals["dino"]
+                        / running_denominator,
+                        "snapshot/running_pseudo_loss": totals["pseudo"]
+                        / running_denominator,
+                        "snapshot/pseudo_weight": pseudo_weight,
+                        "snapshot/dino_weight": 1.0,
+                        "snapshot/learning_rate": optimizer.param_groups[0]["lr"],
+                        "snapshot/teacher_momentum": momentum,
+                        "snapshot/teacher_temperature": teacher_temperature,
+                        "snapshot/gradient_norm_before_clip": gradient_norm,
+                    }
+                    if monitor_head is not None:
+                        scalar_metrics["snapshot/gt_monitor_loss"] = monitor_loss_value
+                        scalar_metrics["snapshot/gt_monitor_iou"] = monitor_iou_value
+                        scalar_metrics["snapshot/pseudo_vs_real_iou"] = pseudo_real_iou
+
+                    maybe_log_training_snapshot(
                         paths,
                         original_images,
                         student_views,
+                        teacher_views,
+                        student_features,
+                        student_outputs,
+                        teacher_outputs,
                         pseudo_targets,
                         segmentation_logits,
-                        previous_count,
-                        wandb_images_seen,
+                        real_targets,
+                        scalar_metrics,
+                        epoch_index,
+                        batch_index,
                     )
 
         if sample_count == 0:
@@ -390,15 +560,30 @@ def main():
         selection_loss = val_metrics["dino"] + pseudo_weight_max * val_metrics["pseudo"]
         log_payload = {
             "epoch": epoch + 1,
-            "learning_rate": optimizer.param_groups[0]["lr"],
-            "teacher_momentum": momentum,
-            "pseudo_weight": pseudo_weight,
+            "schedule/learning_rate": optimizer.param_groups[0]["lr"],
+            "schedule/teacher_momentum": momentum,
+            "schedule/teacher_temperature": get_teacher_temp(epoch),
+            "schedule/pseudo_weight": pseudo_weight,
+            "schedule/dino_weight": 1.0,
             "train/combined_loss": train_metrics["combined"],
             "train/dino_loss": train_metrics["dino"],
             "train/pseudo_loss": train_metrics["pseudo"],
+            "train/weighted_pseudo_loss": pseudo_weight * train_metrics["pseudo"],
+            "train/pseudo_contribution_fraction": (
+                pseudo_weight * train_metrics["pseudo"]
+            )
+            / max(train_metrics["combined"], 1e-12),
+            "train/pseudo_fit_iou": train_metrics["pseudo_fit_iou"],
             "validation/combined_loss": val_metrics["combined"],
             "validation/dino_loss": val_metrics["dino"],
             "validation/pseudo_loss": val_metrics["pseudo"],
+            "validation/weighted_pseudo_loss": pseudo_weight
+            * val_metrics["pseudo"],
+            "validation/pseudo_contribution_fraction": (
+                pseudo_weight * val_metrics["pseudo"]
+            )
+            / max(val_metrics["combined"], 1e-12),
+            "validation/pseudo_fit_iou": val_metrics["pseudo_fit_iou"],
             "validation/selection_loss": selection_loss,
         }
         if monitor_head is not None:
