@@ -25,7 +25,6 @@ from wandb_init import parser_init, wandb_init
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
-
 def env_bool(name, default):
     value = os.environ.get(name)
     if value is None:
