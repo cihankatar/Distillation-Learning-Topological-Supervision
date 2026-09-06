@@ -3,6 +3,7 @@ from data.Custom_Dataset import dataset
 from glob import glob
 from torchvision.transforms import v2 
 import os
+import re
 import torch
 import torchvision.transforms.functional as TF
 
@@ -110,9 +111,24 @@ class DinoMultiCropTransform:
 
 def _canonical_key(path):
     key = os.path.splitext(os.path.basename(path))[0].lower()
+
+    # Prefer the dataset sample identifier wherever it occurs in the name.
+    # This accepts variants such as ``ISIC_0000123_segmentation``,
+    # ``topological_ISIC_0000123`` and ``ISIC-0000123-alpha-020`` without
+    # relying on their method-specific prefixes or suffixes.
+    isic_match = re.search(r"isic[\s_-]*(\d+)", key)
+    if isic_match:
+        return f"sample_{int(isic_match.group(1))}"
+
     for suffix in ("_segmentation", "_mask", "_lesion"):
         if key.endswith(suffix):
             key = key[:-len(suffix)]
+
+    # PH2 and index-based exports commonly differ only in their textual
+    # prefix. A trailing numeric identifier gives them the same safe key.
+    numeric_match = re.search(r"(\d+)$", key)
+    if numeric_match:
+        return f"sample_{int(numeric_match.group(1))}"
     return key
 
 
@@ -126,9 +142,18 @@ def _align_triplets(images, masks, pseudo_masks, data, operation):
 
     key_sets = [set(mapping) for mapping in indexed]
     if not key_sets[0] or not (key_sets[0] == key_sets[1] == key_sets[2]):
+        missing_from_masks = sorted(key_sets[0] - key_sets[1])[:5]
+        missing_from_pmasks = sorted(key_sets[0] - key_sets[2])[:5]
+        masks_without_images = sorted(key_sets[1] - key_sets[0])[:5]
+        pmasks_without_images = sorted(key_sets[2] - key_sets[0])[:5]
         raise RuntimeError(
             f"Expected filename-aligned image/mask/pmask files for {data}/{operation}; "
-            f"found {len(images)}, {len(masks)}, and {len(pseudo_masks)} files."
+            f"found {len(images)}, {len(masks)}, and {len(pseudo_masks)} files. "
+            "Example differences: "
+            f"images missing masks={missing_from_masks}, "
+            f"images missing pmasks={missing_from_pmasks}, "
+            f"masks without images={masks_without_images}, "
+            f"pmasks without images={pmasks_without_images}."
         )
     ordered_keys = sorted(key_sets[0])
     return tuple([[mapping[key] for key in ordered_keys] for mapping in indexed])

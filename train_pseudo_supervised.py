@@ -13,6 +13,7 @@ TOPODISTILL_PMASK_SUBDIR.
 
 import argparse
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -40,9 +41,15 @@ DATASETS = {
 
 def canonical_key(path):
     key = Path(path).stem.lower()
+    isic_match = re.search(r"isic[\s_-]*(\d+)", key)
+    if isic_match:
+        return f"sample_{int(isic_match.group(1))}"
     for suffix in ("_segmentation", "_mask", "_lesion"):
         if key.endswith(suffix):
             key = key[: -len(suffix)]
+    numeric_match = re.search(r"(\d+)$", key)
+    if numeric_match:
+        return f"sample_{int(numeric_match.group(1))}"
     return key
 
 
