@@ -3,11 +3,11 @@ import torch
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
-from torchvision.transforms import v2
+import torchvision.transforms as transforms
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD  = (0.229, 0.224, 0.225)
-IMAGENET_NORMALIZE = v2.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+IMAGENET_NORMALIZE = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
 
 class dataset(Dataset):
