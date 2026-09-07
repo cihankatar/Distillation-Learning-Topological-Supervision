@@ -1,4 +1,6 @@
 import os
+import random
+import numpy as np
 import torch
 import wandb
 from tqdm import tqdm, trange
@@ -31,9 +33,12 @@ def setup_paths(data):
     if folder is None:
         raise ValueError(f"Unsupported dataset: {data}")
     output_key = "ML_DATA_OUTPUT" if torch.cuda.is_available() else "ML_DATA_OUTPUT_LOCAL"
-    base_path = os.environ.get(output_key) or os.environ.get("ML_DATA_OUTPUT")
-    if not base_path:
-        raise EnvironmentError(f"{output_key} must point to the checkpoint output directory")
+    base_path = (
+        os.environ.get(output_key)
+        or os.environ.get("ML_DATA_OUTPUT_LOCAL")
+        or os.environ.get("ML_DATA_OUTPUT")
+        or "/Users/output/ckatar/output/"
+    )
     folder_path = os.path.join(base_path, folder)
     os.makedirs(folder_path, exist_ok=True)
     return folder_path
@@ -44,20 +49,30 @@ def main():
     # Configuration and Initial Setup
 
     data = os.environ.get("TOPODISTILL_DATASET", "isic_2018_1")
-    seed = int(os.environ.get("TOPODISTILL_SEED", "932"))
     training_mode, op, dinowithsegloss = "ssl_pretrained", "train", False
 
     best_valid_loss   = float("inf")
     device      = using_device()
     folder_path = setup_paths(data)
     args, res, ssl_config   = parser_init("segmentation task", op, training_mode)
-    
+
+    seed = args.seed if getattr(args, "seed", None) is not None else int(os.environ.get("TOPODISTILL_SEED", "932"))
+
+    # Seed all random generators deterministically
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
     res           = " ".join(res)
     res           = "["+res+"]"
     ssl_config    = " ".join(ssl_config)
     ssl_config    = "[" + ssl_config + f"]_segloss_True_{data}"
 
-    config      = wandb_init(os.environ.get("WANDB_API_KEY"), os.environ.get("WANDB_DIR"), args, data, dinowithsegloss)
+    wandb_key = os.environ.get("WANDB_API_KEY") or "d909071ecea56786a3534173c984fd13b2a361bd"
+    wandb_dir = os.environ.get("WANDB_DIR") or "/Users/output/ckatar/"
+    config    = wandb_init(wandb_key, wandb_dir, args, data, dinowithsegloss, seed=seed)
 
     # Data Loaders
     def create_loader(operation,seed):
@@ -89,7 +104,7 @@ def main():
     scheduler = CosineAnnealingLR(optimizer, config['epochs'], eta_min=config['learningrate'] / 10)
     loss_fn   = Dice_CE_Loss()
     
-    print(f"Training on {len(train_loader) * args.bsize} images. Saving checkpoints to {folder_path}")
+    print(f"Training on {len(train_loader) * args.bsize} images with seed {seed}. Saving checkpoints to {folder_path}")
     print('Train loader transform',train_loader.dataset.tr)
     print('Val loader transform',val_loader.dataset.tr)
     print(f"model config : {checkpoint_path}")

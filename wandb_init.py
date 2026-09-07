@@ -103,6 +103,7 @@ def parser_init(name, op, training_mode=None):
     parser.add_argument("-c", "--cutoutbox",        type=float,default=configs["cutoutbox"])
     parser.add_argument("-x", "--cutmixpr",         type=float,default=configs["cutmixpr"])
     parser.add_argument("-n", "--noclasses",        type=int,default=configs["noclasses"])
+    parser.add_argument("--seed",                   type=int,default=None)
 
     args=parser.parse_args()
     args_key=[]
@@ -110,6 +111,8 @@ def parser_init(name, op, training_mode=None):
     res=[]
 
     for key,value in vars(args).items():
+        if key == "seed":
+            continue
         args_key.append(key)
         args_value.append(str(value))
 
@@ -125,7 +128,7 @@ def parser_init(name, op, training_mode=None):
     else:
         return args, res
 
-def wandb_init(wandb_api_key, wandb_dir, args, data, dinowithsegloss):
+def wandb_init(wandb_api_key, wandb_dir, args, data, dinowithsegloss, seed=None):
     
     op                  = args.op
     training_mode       = args.mode
@@ -143,8 +146,9 @@ def wandb_init(wandb_api_key, wandb_dir, args, data, dinowithsegloss):
     box_size            = args.cutoutbox
     cutmixpr            = args.cutmixpr
     workers             = args.workers
+    effective_seed      = seed if seed is not None else (getattr(args, "seed", None) or os.environ.get("TOPODISTILL_SEED", "932"))
 
-    print(f'Training Configs:\noperation:{op}\ntraining_mode:{training_mode}\nssl_mode_modelname:{ssl_mode_modelname}\nimagenetpretrained:{imnetpr} \nbatch_size:{batch_size}, \nepochs:{epochs}, \nimagesize:{image_size}, \naugmentation:{augmentation}, \nl_r:{learningrate}, \nn_classes:{n_classes}, \nshuffle:{shuffle}, \ncutout_pr:{cutout_pr}, \ncutout_box_size:{box_size},\ncutmixpr:{cutmixpr}, \nworkers:{workers},\nsplit_ratio:{split_ratio}')
+    print(f'Training Configs:\noperation:{op}\ntraining_mode:{training_mode}\nssl_mode_modelname:{ssl_mode_modelname}\nimagenetpretrained:{imnetpr} \nbatch_size:{batch_size}, \nepochs:{epochs}, \nimagesize:{image_size}, \naugmentation:{augmentation}, \nl_r:{learningrate}, \nn_classes:{n_classes}, \nshuffle:{shuffle}, \ncutout_pr:{cutout_pr}, \ncutout_box_size:{box_size},\ncutmixpr:{cutmixpr}, \nworkers:{workers},\nsplit_ratio:{split_ratio},\nseed:{effective_seed}')
 
     if wandb_api_key:
         wandb.login(key=wandb_api_key)
@@ -162,8 +166,10 @@ def wandb_init(wandb_api_key, wandb_dir, args, data, dinowithsegloss):
     else:
         project_name = data+"AAtt-Next-SSL_Test"
 
-                
-    wandb.init(project=project_name, dir=wandb_dir, name=f"{args.mode}_s{args.sratio}_ep{args.epochs}_segloss_{dinowithsegloss}",
+    seed_tag = f"_seed{effective_seed}" if effective_seed is not None else ""
+    run_name = f"{args.mode}_s{args.sratio}_ep{args.epochs}{seed_tag}_segloss_{dinowithsegloss}"
+
+    wandb.init(project=project_name, dir=wandb_dir, name=run_name,
         config={
             "operation"       : op,
             "training_mode"   : training_mode,
@@ -174,6 +180,7 @@ def wandb_init(wandb_api_key, wandb_dir, args, data, dinowithsegloss):
             "learningrate"    : learningrate,
             "n_classes"       : n_classes,
             "split_ratio"     : split_ratio,
+            "seed"            : effective_seed,
             "num_workers"     : workers,
             "image_size"      : image_size,
             "cutmix_pr"       : cutmixpr,

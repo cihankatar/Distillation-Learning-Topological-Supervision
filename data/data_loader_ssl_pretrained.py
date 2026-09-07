@@ -2,7 +2,7 @@ from torch.utils.data import DataLoader
 
 from data.Custom_Dataset_ssl_pretrained import dataset
 from glob import glob
-from torchvision.transforms import v2 
+import torchvision.transforms as transforms
 import os
 import numpy as np
 import torch
@@ -37,26 +37,23 @@ def resolve_labeled_budget(dataset_name, total_samples, split_ratio):
 
 def data_transform(op,image_size):
 
+        try:
+            resize_tf = transforms.Resize([image_size, image_size], antialias=True)
+        except TypeError:
+            resize_tf = transforms.Resize([image_size, image_size])
+
         if op=="train":
 
-            transformations = v2.Compose([  v2.Resize([image_size,image_size],antialias=True),                                           
-                                        v2.RandomHorizontalFlip(p=0.5),
-                                        v2.RandomVerticalFlip(p=0.5),
-                                        v2.RandomRotation(degrees=(0, 90)),
-                                        #v2.RandomAdjustSharpness(sharpness_factor=10, p=0.),
-                                        #v2.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)
-                                        #v2.RandomPerspective(distortion_scale=0.5, p=0.5),
-                                        #v2.RandomAffine(degrees=(30, 70), translate=(0.1, 0.3), scale=(0.75, 0.75)),
-                                        #v2.RandomPhotometricDistort(p=0.3),
-                                        #v2.Normalize(mean=(0.400, 0.485, 0.456, 0.406), std=(0,222, 0.229, 0.224, 0.225))                              
-                                    ])
+            transformations = transforms.Compose([  
+                resize_tf,                                           
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.RandomVerticalFlip(p=0.5),
+                transforms.RandomRotation(degrees=(0, 90)),
+            ])
         else:
-            transformations = v2.Compose([  v2.Resize([image_size,image_size],antialias=True),
-                            #v2.RandomHorizontalFlip(p=0.5),
-                            #v2.RandomVerticalFlip(p=0.5),
-                            #v2.RandomRotation(degrees=(0, 90)),
-                            #v2.Normalize(mean=(0.400, 0.485, 0.456, 0.406), std=(0,222, 0.229, 0.224, 0.225)),                                
-                            ])
+            transformations = transforms.Compose([  
+                resize_tf,
+            ])
             
         return transformations
 
@@ -85,9 +82,7 @@ def loader(op,mode,sslmode,batch_size,num_workers,image_size,cutout_pr,cutout_bo
     else:
         raise ValueError(f"Unsupported dataset: {data}")
 
-    data_root = os.environ.get("ML_DATA_ROOT")
-    if not data_root:
-        raise EnvironmentError("ML_DATA_ROOT must point to the directory containing the datasets")
+    data_root = os.environ.get("ML_DATA_ROOT") or "/Users/input/data/ckatar/"
     dataset_root = os.path.join(data_root, foldernamepath)
 
     if not mode == "ssl_pretrained":
