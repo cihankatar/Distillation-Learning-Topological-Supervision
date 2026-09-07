@@ -3,6 +3,11 @@ import torch
 import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
+from torchvision.transforms import v2
+
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD  = (0.229, 0.224, 0.225)
+IMAGENET_NORMALIZE = v2.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
 
 
 class dataset(Dataset):
@@ -32,17 +37,17 @@ class dataset(Dataset):
             mask = torch.from_numpy(mask)
             mask = mask.unsqueeze(0)
 
-            image=image/255
-            mask=mask/255
+            image = image / 255.0
+            mask = mask / 255.0
 
-            s = np.random.randint(0,2**16)   
+            s = np.random.randint(0, 2**16)   
             np.random.seed(s)
             torch.manual_seed(s)
             image = self.tr(image)
             np.random.seed(s)
             torch.manual_seed(s)
             mask = self.tr(mask)
+
+            image = IMAGENET_NORMALIZE(image)
                 
-            return image , mask
-    
-    
+            return image, mask
