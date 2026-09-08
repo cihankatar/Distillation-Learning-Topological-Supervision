@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:1                                            # 1 GPU
 #SBATCH -N 1                                                    # 1 Node
 #SBATCH -n 1                                                    # 1 Task
-#SBATCH --cpus-per-task 10                                      # CPU cekirdek sayisi
+#SBATCH --cpus-per-task 20                                      # CPU cekirdek sayisi
 #SBATCH --time=24:00:00                                         # Sure siniri (HH:MM:SS)
 #SBATCH --mail-type=begin,end                                   # Is basladiginda ve bittiginde e-posta
 #SBATCH --mail-user=cihan.katar@tau.edu.tr
@@ -19,9 +19,10 @@ module load miniconda3
 conda activate segmentation
 cd /arf/home/ckatar/Desktop/Repo/Distillation-Learning-Topological-Supervision
 
-# Race condition onlemek icin git pull oncesi kisa bekleme
+# TRUBA uzerinde cakisma olmamasi icin origin/main ile senkronize et
 sleep $(( (SLURM_ARRAY_TASK_ID % 5) * 2 ))
-git pull origin main
+git fetch origin main
+git reset --hard origin/main
 
 mkdir -p logs
 
@@ -42,4 +43,5 @@ echo "Calisan Node        : $SLURMD_NODENAME"
 echo "Baslama Zamani      : $(date)"
 echo "=========================================================="
 
+export TOPODISTILL_SEED=$SEED
 python train_ssl_pretrained.py -r $CURRENT_RATIO --seed $SEED
