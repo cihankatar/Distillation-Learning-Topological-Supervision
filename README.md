@@ -153,16 +153,32 @@ All available runtime options can be listed with `python <script>.py --help`. `c
 
 ## Evaluation
 
-`TOPODISTILL_DATASET` selects the dataset-specific checkpoint directory and `TOPODISTILL_TEST_DATASET` selects the test set. An explicit model path is recommended:
+`test.py` can evaluate a single checkpoint or discover all downstream runs for
+the requested label ratios and seeds. An explicit model path can be tested with:
 
 ```bash
-export TOPODISTILL_DATASET=isic_2018_1
-export TOPODISTILL_TEST_DATASET=PH2Dataset
-export TOPODISTILL_MODEL_CHECKPOINT=/absolute/path/to/segmentation_checkpoint.pth
-python test.py --bsize 8
+python test.py \
+  --checkpoint /absolute/path/to/segmentation_checkpoint \
+  --test-dataset isic_2018_1
 ```
 
-The evaluation reports IoU/Jaccard, Dice/F1, recall, precision, and pixel accuracy.
+To evaluate and aggregate the 5-, 10-, 20-, 104-, and 208-label runs over
+seeds 100, 200, and 300:
+
+```bash
+python test.py \
+  --checkpoint-dir /absolute/path/to/output/isic_1 \
+  --ratios 0.0025 0.005 0.01 0.05 0.1 \
+  --seeds 100 200 300 \
+  --report-dir reports/downstream_test
+```
+
+The report directory contains per-checkpoint CSV values, mean and sample
+standard deviation across seeds, JSON metadata, a readable Markdown report,
+and a LaTeX fragment for the TopoDistill rows in Table 3. The default
+`legacy-batch` reduction preserves compatibility with the historical table;
+pass `--metric-reduction global` for a single test-set confusion matrix. On
+TRUBA, submit the complete evaluation with `sbatch barbuntest.slurm`.
 
 ## Weights & Biases
 
