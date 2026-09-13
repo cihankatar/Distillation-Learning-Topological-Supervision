@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH -N 1
 #SBATCH -n 1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=20
 #SBATCH --time=08:00:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=cihan.katar@tau.edu.tr
