@@ -9,16 +9,14 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=20
 #SBATCH --time=08:00:00
-#SBATCH --mail-type=BEGIN,END,FAIL
-#SBATCH --mail-user=cihan.katar@tau.edu.tr
 
 set -euo pipefail
 
 module load miniconda3
 conda activate segmentation
 
-REPO_DIR=/arf/home/ckatar/Desktop/Repo/Distillation-Learning-Topological-Supervision
-CHECKPOINT_DIR=/arf/home/ckatar/output/isic_1
+REPO_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+CHECKPOINT_DIR="${ML_DATA_OUTPUT:?ML_DATA_OUTPUT must be set}/isic_1"
 REPORT_DIR="${CHECKPOINT_DIR}/reports/downstream_test_${SLURM_JOB_ID}"
 
 if [[ -z "${ML_DATA_ROOT:-}" ]]; then

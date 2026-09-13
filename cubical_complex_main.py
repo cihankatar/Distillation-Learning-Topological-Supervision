@@ -12,8 +12,6 @@ from skimage.transform import resize
 from scipy import ndimage as ndi
 from utils.Dullrazor import dullrazor
 from utils.iou_dice import iou_and_dice
-from utils.Local_Variance import local_variance_
-from utils.PCA_channel import pca_channel,best_channel,NMF_channel
 from utils.Algorithms import (
     chc_otsu_pseudo_mask,
     grabcut_pseudo_mask,
@@ -28,7 +26,6 @@ from utils.color_fields import (
 )
 from utils.padding import adaptive_pad, upsample_patch_map
 from skimage.filters import threshold_otsu
-from custom_cubical_complexes import custom_cubical_complex 
 from plotting import (
     plot,
     plot_pseudo_mask_comparison,
@@ -40,7 +37,6 @@ import time
 # None: aktif H0 persistence değerlerinde otomatik Otsu.
 # Sayı: bu değerden kısa yaşayan H0 bileşenlerini elle reddet.
 H0_PERSISTENCE_THRESHOLD = None
-DEFAULT_ML_DATA_ROOT = "/Users/input/data/ckatar"
 
 # Independent switches for the interactive figures produced by this file.
 # Each value can also be overridden with an environment variable of the same
@@ -499,19 +495,19 @@ def env_optional_float(name):
 def resolve_ml_data_root():
     """Resolve the dataset root consistently in terminals and VS Code.
 
-    VS Code may launch the selected conda interpreter without executing
-    ``conda activate``; conda-configured variables are then absent from the
-    child process.  Prefer ``ML_DATA_ROOT`` when it is available and otherwise
-    use the same local fallback as ``test_new.py``.
+    The public repository has no machine-specific fallback.  ``ML_DATA_ROOT``
+    must point to the directory containing the dataset folders.
     """
     configured_root = os.environ.get("ML_DATA_ROOT", "").strip()
-    data_root = configured_root or DEFAULT_ML_DATA_ROOT
-    data_root = os.path.abspath(os.path.expanduser(data_root))
+    if not configured_root:
+        raise EnvironmentError(
+            "ML_DATA_ROOT must point to the directory containing the datasets"
+        )
+    data_root = os.path.abspath(os.path.expanduser(configured_root))
 
     if not os.path.isdir(data_root):
-        source = "ML_DATA_ROOT" if configured_root else "the local fallback"
         raise FileNotFoundError(
-            f"Dataset root from {source} does not exist: {data_root}. "
+            f"Dataset root from ML_DATA_ROOT does not exist: {data_root}. "
             "Set ML_DATA_ROOT to the directory containing the datasets."
         )
 

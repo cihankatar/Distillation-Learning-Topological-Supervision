@@ -9,20 +9,13 @@
 #SBATCH -n 1                                                    # 1 Task
 #SBATCH --cpus-per-task 20                                      # CPU cekirdek sayisi
 #SBATCH --time=24:00:00                                         # Sure siniri (HH:MM:SS)
-#SBATCH --mail-type=begin,end                                   # Is basladiginda ve bittiginde e-posta
-#SBATCH --mail-user=cihan.katar@tau.edu.tr
 
 # 5 farkli etiket orani icin dizi (0: 5, 1: 10, 2: 20, 3: 104, 4: 208)
 #SBATCH --array=0-4
 
 module load miniconda3
 conda activate segmentation
-cd /arf/home/ckatar/Desktop/Repo/Distillation-Learning-Topological-Supervision
-
-# TRUBA uzerinde cakisma olmamasi icin origin/main ile senkronize et
-sleep $(( (SLURM_ARRAY_TASK_ID % 5) * 2 ))
-git fetch origin main
-git reset --hard origin/main
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
 
 mkdir -p logs
 

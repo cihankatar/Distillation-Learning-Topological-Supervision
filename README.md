@@ -1,54 +1,50 @@
-# TopoDistill
+# Persistence-Derived Pseudo-Masks for Label-Efficient Self-Distillation: TopoDistill for Dermoscopic Segmentation
 
-Official research implementation for **“TopoDistill for Skin Lesion Segmentation with Persistent Homology-Guided Pseudo-Masks.”**
+Official implementation of the manuscript **“Persistence-Derived Pseudo-Masks for Label-Efficient Self-Distillation: TopoDistill for Dermoscopic Segmentation.”**
 
-TopoDistill combines topology-guided pseudo-mask supervision with multi-crop teacher–student self-distillation. It is designed to learn segmentation-aware representations from dermoscopic images and transfer the pretrained Att-Next encoder to skin-lesion segmentation when only a small labeled subset is available.
+TopoDistill creates annotation-free lesion pseudo-masks from a cubical filtration and uses them as dense auxiliary supervision during global multi-crop DINO pretraining. The pretrained Att-Next encoder is transferred to skin-lesion segmentation under small labeled-data budgets.
 
-## Method overview
+## Pipeline
 
-The repository implements three related experiments:
+1. **Pseudo-mask extraction.** DullRazor hair suppression is followed by a robust lesion-evidence field combining color distance from an estimated skin reference, HSV saturation, and inverse brightness. A finite `H1` persistence class selects an image-specific threshold; active `H0` classes, spatial rejection, and protected morphology clean the mask.
+2. **Self-distillation.** `train_dino.py` gives the teacher two global crops and the student the same two global crops plus four local crops. Global pooled features drive the DINO loss. A dense student head learns from the two geometrically aligned pseudo-masks using boundary-masked BCE plus Dice loss.
+3. **Downstream segmentation.** `train_ssl_pretrained.py` freezes the pretrained encoder and fits the Att-Next decoder on a labeled subset. `train_random.py` is the same-backbone from-scratch baseline.
 
-1. **TopoDistill pretraining** — `train_dino.py` trains a student encoder using global multi-crop DINO self-distillation and an auxiliary segmentation head supervised by persistent-homology pseudo-masks. An exponential-moving-average copy of the student is used as the teacher. The teacher receives two global crops; the student receives the same two spatially aligned global crops plus four local crops. Both global student crops contribute to the pseudo-mask loss.
-2. **Downstream segmentation** — `train_ssl_pretrained.py` loads the pretrained encoder, freezes it, and trains the Att-Next decoder and segmentation head on a labeled subset.
-3. **Supervised baselines** — `train_random.py` trains Att-Next from random initialization on real masks; `train_pseudo_supervised.py` trains the complete network directly on topological pseudo masks.
+The optional ground-truth monitoring head is a detached diagnostic probe. It is disabled by default, does not update the encoder, and is not used for checkpoint selection. The encoder checkpoint is selected with validation DINO loss plus pseudo-mask loss.
 
-The optional detached monitor head used during pretraining is supervised by ground-truth masks for evaluation only; its gradients do not update the encoder and its IoU is not used for checkpoint selection. The best encoder is selected using validation DINO loss plus pseudo-mask loss, without real-mask labels.
-
-## Repository layout
+## Repository structure
 
 ```text
-augmentation/                 paired image/mask augmentations
-data/                         datasets, transforms, and data loaders
-models/                       Att-Next encoder, decoder, and optional baselines
-models/mednext/               optional MedNeXt implementation
-utils/                        losses, metrics, heads, and pseudo-mask helpers
-cubical_complex_main.py       topology-guided pseudo-mask generation
-train_dino.py                 TopoDistill/self-distillation pretraining
-train_ssl_pretrained.py       labeled downstream training with a frozen encoder
-train_random.py               supervised random-initialization baseline
-train_pseudo_supervised.py    direct training on topology-guided pseudo masks
-test.py                       checkpoint evaluation
-plotting.py                   qualitative and topology visualizations
-config.yaml                   human-readable reference defaults
-wandb_init.py                 runtime arguments and experiment tracking
+augmentation/                  paired image/mask transformations
+data/                          dataset classes and loaders
+models/                        Att-Next encoder/decoder and heads
+utils/                         losses, metrics, color fields, and mask methods
+scripts/                       manuscript and W&B figure utilities
+scripts/slurm/                 cluster templates for seeds 100, 200, and 300
+cubical_complex_main.py        topology algorithm and interactive diagnostics
+test_new.py                    batch pseudo-mask evaluation/generation
+train_dino.py                  TopoDistill pretraining
+train_ssl_pretrained.py        frozen-encoder downstream training
+train_random.py                supervised from-scratch baseline
+train_pseudo_supervised.py     direct training on pseudo-masks
+test.py                        checkpoint evaluation and aggregation
+config.yaml                    readable reference defaults
 ```
-
-`plot_test_images.py`, the root-level `data_loader_ssl_pretrained.py`, `models/FAT_NET.py`, and `utils/Test_Train_Split.py` are retained as legacy experiment utilities. They are not required by the main TopoDistill pipeline and may refer to architectures or data layouts that are not included in this release.
 
 ## Installation
 
-Python 3.10 or newer is recommended. Install a PyTorch build suitable for your CUDA version first when using a GPU, then install the remaining dependencies:
+Python 3.10 or newer is recommended. Install the correct PyTorch build for the target CUDA version, then install the repository requirements.
 
 ```bash
-git clone https://github.com/cihankatar/Att-Next-Distillation_Learning.git
-cd Att-Next-Distillation_Learning
+git clone https://github.com/cihankatar/Distillation-Learning-Topological-Supervision.git
+cd Distillation-Learning-Topological-Supervision
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-Copy the environment template and replace its example paths:
+Create a local environment file and replace the example paths:
 
 ```bash
 cp .env.example .env
@@ -57,11 +53,11 @@ source .env
 set +a
 ```
 
-Do not commit `.env`; it is ignored because it may contain a W&B API key.
+`.env`, datasets, checkpoints, W&B files, and generated reports are ignored by Git.
 
 ## Data layout
 
-Set `ML_DATA_ROOT` to the directory containing the datasets. A dataset used for all stages should follow this layout:
+`ML_DATA_ROOT` must point to the parent directory containing the datasets:
 
 ```text
 ML_DATA_ROOT/
@@ -80,41 +76,48 @@ ML_DATA_ROOT/
         └── pmasks/
 ```
 
-Supported dataset identifiers are `isic_2018_1`, `isic_2016_1`, `PH2Dataset`, `kvasir_1`, and `ham_1` (stored in `HAM10000_1/`). Keep corresponding images, masks, and pseudo-masks in each split; suffixes such as `_segmentation` are accepted by the direct pseudo-supervised loader.
+Supported identifiers are `isic_2018_1`, `isic_2016_1`, `PH2Dataset`, `kvasir_1`, and `ham_1` (`HAM10000_1/` on disk). The pretraining loader aligns image, mask, and pseudo-mask filenames by a canonical sample identifier. Downstream image/mask directories must contain matching, consistently sortable filenames.
 
-Checkpoints are written under `ML_DATA_OUTPUT` on CUDA systems and `ML_DATA_OUTPUT_LOCAL` otherwise. Setting both variables to the same directory is valid.
+## Generate pseudo-masks
 
-## Generate topology-guided pseudo-masks
-
-The generator writes binary PNG masks to `<dataset>/<split>/pmasks`. The default `--start-index 1` preserves the original experiment setting; pass `0` to process every image.
+The canonical batch entry point is `test_new.py`. This command generates only the final `alpha=0.20` topology masks and writes them into each split’s `pmasks/` directory:
 
 ```bash
-python cubical_complex_main.py \
-  --dataset isic_2018_1 \
-  --split train \
-  --start-index 0
+python test_new.py \
+  --dataset isic2018 \
+  --splits train val test \
+  --topology-only \
+  --save-topological-masks
 ```
 
-Use `--limit 10` for a short run and `--show` to display the pseudo-mask candidates, overlap metrics, and persistence diagram. Repeat the command for `val` and `test` when those splits are used during pretraining.
+Pseudo-masks are not written unless `--save-topological-masks` is supplied. To evaluate the five classical baselines on the same scalar field, omit `--topology-only`:
 
-## Training
+```bash
+python test_new.py --dataset isic2018 --splits test
+```
 
-Select the dataset and seed through environment variables:
+Use `--sample-size 20` for a smoke test. Each run appends to `<dataset>/test_new_results.txt` and also creates a timestamped report. Reports contain split-specific metrics, Betti errors, topologically correct rates, runtimes, method failures, and low-IoU image names.
+
+`cubical_complex_main.py` remains an interactive per-image diagnostic program. Its four plot families are controlled independently with `SHOW_DIAGNOSTIC_PLOT`, `SHOW_COMPARISON_PLOT`, `SHOW_SCALAR_EXPLANATION_PLOT`, and `SHOW_CLEANUP_PLOT`.
+
+## Pretraining
 
 ```bash
 export TOPODISTILL_DATASET=isic_2018_1
 export TOPODISTILL_SEED=932
-```
-
-Run TopoDistill pretraining:
-
-```bash
 python train_dino.py --epochs 300 --bsize 8 --lrate 0.0001
 ```
 
-The pseudo-mask weight is linearly warmed up for the first 20 epochs and a two-pixel uncertain boundary band is ignored by default. Losses, weights, schedules, and train/validation metrics are recorded at every epoch. Every 25 epochs, W&B additionally records the original image, two student global crops, four student local crops, two teacher global crops, both aligned pseudo masks, and both auxiliary probability/binary predictions. The same qualitative snapshot records output entropies, embedding standard deviation, DINO-center norm, gradient norm, and foreground fractions. These settings can be changed without editing code:
+The default objective is:
+
+```text
+L_total = L_DINO + lambda_p(epoch) * (L_BCE + L_Dice)
+```
+
+`lambda_p` warms linearly to `1.0` during the first 20 epochs. Runtime settings include:
 
 ```bash
+export TOPODISTILL_PMASK_SUBDIR=pmasks
 export TOPODISTILL_PSEUDO_WEIGHT=1.0
 export TOPODISTILL_PSEUDO_WARMUP_EPOCHS=20
 export TOPODISTILL_BOUNDARY_IGNORE_RADIUS=2
@@ -122,85 +125,95 @@ export TOPODISTILL_WANDB_VIS_EPOCH_INTERVAL=25
 export TOPODISTILL_ENABLE_GT_MONITOR=false
 ```
 
-Run downstream segmentation with the pretrained encoder:
+Scalar losses and schedules are logged every epoch. Image/crop/mask visualizations are logged every 25 epochs by default.
 
-```bash
-python train_ssl_pretrained.py --epochs 503 --sratio 0.1
-```
+## Downstream training
 
-By default, the downstream script reconstructs the encoder checkpoint name from the SSL defaults. For a custom pretraining run, provide its path explicitly:
+Use the saved encoder explicitly when possible:
 
 ```bash
 export TOPODISTILL_ENCODER_CHECKPOINT=/absolute/path/to/encoder_checkpoint.pth
-python train_ssl_pretrained.py --epochs 503 --sratio 0.1
+python train_ssl_pretrained.py --epochs 503 --sratio 0.01 --seed 100
 ```
 
-Run the random-initialization supervised baseline:
+For ISIC2018, ratios `0.0025`, `0.005`, `0.01`, `0.05`, `0.10`, and `0.50` resolve to exactly 5, 10, 20, 104, 208, and 1040 labeled images. The from-scratch comparison is:
 
 ```bash
-python train_random.py --epochs 450 --sratio 0.1
+python train_random.py --epochs 450 --sratio 0.01 --seed 100
 ```
 
-Run the direct pseudo-mask supervised comparison. Training targets are always pseudo masks; validation and test metrics are reported against real masks:
+Direct training on pseudo-masks is available as a diagnostic comparison:
 
 ```bash
-python train_pseudo_supervised.py --dataset isic_2018_1 --epochs 300
+python train_pseudo_supervised.py \
+  --dataset isic_2018_1 \
+  --epochs 300 \
+  --validation-target pseudo
 ```
 
-For label-free checkpoint selection, add `--validation-target pseudo`. Other datasets can be selected with `--dataset PH2Dataset` or `--dataset isic_2016_1`.
-
-All available runtime options can be listed with `python <script>.py --help`. `config.yaml` mirrors the default values for readability; `wandb_init.py` remains the runtime source of truth.
+The three `scripts/slurm/barbundino_*.slurm` files are cluster templates for seeds 100, 200, and 300. Submit them from the repository root after setting the environment variables; the scripts do not modify or reset the Git checkout.
 
 ## Evaluation
 
-`test.py` can evaluate a single checkpoint or discover all downstream runs for
-the requested label ratios and seeds. An explicit model path can be tested with:
+Evaluate one segmentation checkpoint:
 
 ```bash
 python test.py \
-  --checkpoint /absolute/path/to/segmentation_checkpoint \
+  --checkpoint /absolute/path/to/checkpoint \
   --test-dataset isic_2018_1
 ```
 
-To evaluate and aggregate the 5-, 10-, 20-, 104-, and 208-label runs over
-seeds 100, 200, and 300:
+Discover and aggregate several label-budget runs:
 
 ```bash
 python test.py \
-  --checkpoint-dir /absolute/path/to/output/isic_1 \
+  --checkpoint-dir "$ML_DATA_OUTPUT/isic_1" \
   --ratios 0.0025 0.005 0.01 0.05 0.1 \
   --seeds 100 200 300 \
   --report-dir reports/downstream_test
 ```
 
-The report directory contains per-checkpoint CSV values, mean and sample
-standard deviation across seeds, JSON metadata, a readable Markdown report,
-and a LaTeX fragment for the TopoDistill rows in Table 3. The default
-`legacy-batch` reduction preserves compatibility with the historical table;
-pass `--metric-reduction global` for a single test-set confusion matrix. On
-TRUBA, submit the complete evaluation with `sbatch barbuntest.slurm`.
+The report directory includes per-checkpoint CSV data, aggregate CSV/JSON, Markdown, and a LaTeX table fragment. Add all actual experimental seeds to `--seeds`; do not describe three runs as five in a manuscript.
+
+## Rebuild plots without retraining
+
+Completed W&B histories can be exported directly into a journal-quality epoch plot with sample-standard-deviation bands:
+
+```bash
+python scripts/plot_wandb_curves.py \
+  --metric validation/gt_monitor_iou \
+  --group 'TopoDistill=entity/project/run1,entity/project/run2' \
+  --group 'Self-Distillation=entity/project/run3,entity/project/run4' \
+  --output figures/monitor_iou
+```
+
+This produces PNG, PDF, and CSV files without starting training. A valid `±1 SD` band requires multiple completed runs with the raw per-epoch metric. A dashboard screenshot or one averaged curve cannot reconstruct that uncertainty.
+
+Additional figure utilities:
+
+```bash
+python scripts/generate_label_budget_qualitative.py --help
+python scripts/train_dino_framework_visualization.py --help
+```
 
 ## Weights & Biases
 
-Training logs to Weights & Biases. For a local run without network logging:
+Use an existing `wandb login` session or provide `WANDB_API_KEY` only through the environment. For a local run:
 
 ```bash
 export WANDB_MODE=offline
 ```
 
-For online logging, set `WANDB_MODE=online`, configure `WANDB_API_KEY`, and set `WANDB_DIR` to a writable location. No credentials are stored in this repository.
+Never commit API keys. If a credential has appeared in Git history, revoke it in W&B and issue a new one; deleting it from the latest file does not erase the old commit.
 
 ## Reproducibility notes
 
-- The downstream labeled subset is shuffled deterministically using `TOPODISTILL_SEED`.
-- Model filenames include the runtime arguments and seed. Changing an argument therefore produces a different checkpoint name.
-- Pseudo-mask quality depends on image preprocessing and persistent-homology thresholds; inspect representative samples with `--show` before a full run.
-- Dataset files and pretrained weights are not distributed in this repository.
+- Training subsets are selected deterministically from `TOPODISTILL_SEED`/`--seed`.
+- Pseudo-mask baselines in `test_new.py` receive the same robust scalar field.
+- The final topology mask uses `alpha=0.20`; alternative alpha values must be selected on development data, not the held-out test set.
+- Dataset files, pseudo-masks, and pretrained weights are not included.
+- No open-source license is currently included; reuse and redistribution require the authors’ permission until a license is chosen.
 
 ## Citation
 
-If you use this code, please cite the accompanying manuscript. A complete BibTeX entry will be added when the publication metadata is available.
-
-## License
-
-No open-source license has been added yet. Until one is provided, reuse and redistribution require permission from the author.
+A BibTeX record will be added when publication metadata is available.

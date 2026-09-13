@@ -1,3 +1,4 @@
+import argparse
 import os
 import sys
 import time
@@ -30,12 +31,6 @@ from utils.Algorithms import (
     watershed_pseudo_mask,
 )
 from cubical_complex_main import cubical_complex_segmentation, resolve_ml_data_root
-
-# Set this to True only when the final alpha=0.20 topological masks should be
-# written to disk.  Baseline masks are never saved by this evaluation script.
-SAVE_TOPOLOGICAL_MASKS = True
-DATA_ROOT = Path(resolve_ml_data_root())
-
 
 DATASET_ALIASES = {
     "isic2018": "isic_2018_1",
@@ -179,7 +174,7 @@ def evaluate_dataset(
 
     # Hedef pmasks klasörü
     base_split_dir = image_dir.parent
-    # Example: /Users/input/data/ckatar/isic_2018_1/train/pmasks
+    # Example: <ML_DATA_ROOT>/isic_2018_1/train/pmasks
     pmask_dir = base_split_dir / "pmasks"
     if save_topological_masks:
         os.makedirs(pmask_dir, exist_ok=True)
@@ -583,9 +578,78 @@ def ask_dataset_name():
     return DATASET_ALIASES[dataset_key]
 
 
-if __name__ == "__main__":
-    dataset = ask_dataset_name()
-    base = os.path.join(DATA_ROOT, dataset)
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Evaluate pseudo-mask methods and optionally save only the final "
+            "alpha=0.20 topological masks."
+        )
+    )
+    parser.add_argument(
+        "--dataset",
+        default=None,
+        help="isic2018, ph2, isic2016, or the corresponding directory name",
+    )
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help="Dataset parent directory (defaults to ML_DATA_ROOT)",
+    )
+    parser.add_argument(
+        "--splits",
+        nargs="+",
+        choices=("train", "val", "test"),
+        default=("train", "val", "test"),
+    )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=None,
+        help="Evaluate a random subset instead of the full split",
+    )
+    parser.add_argument(
+        "--low-score-threshold",
+        type=float,
+        default=0.20,
+        help="IoU threshold used to list failed/low-quality masks",
+    )
+    parser.add_argument(
+        "--save-topological-masks",
+        action="store_true",
+        help="Write final masks to <dataset>/<split>/pmasks",
+    )
+    parser.add_argument(
+        "--topology-only",
+        action="store_true",
+        help="Skip the five classical baselines (useful for mask generation)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=932,
+        help="Seed used only when --sample-size is set",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    random.seed(args.seed)
+
+    if args.dataset is None:
+        dataset = ask_dataset_name()
+    else:
+        dataset_key = args.dataset.lower()
+        if dataset_key not in DATASET_ALIASES:
+            raise ValueError(
+                f"Bilinmeyen veri seti: {args.dataset!r}. "
+                "Geçerli seçenekler: isic2018, ph2, isic2016."
+            )
+        dataset = DATASET_ALIASES[dataset_key]
+
+    data_root = args.data_root or Path(resolve_ml_data_root())
+    base = os.path.join(data_root, dataset)
     if not Path(base).is_dir():
         raise FileNotFoundError(f"Veri seti klasörü bulunamadı: {base}")
 
@@ -617,21 +681,23 @@ if __name__ == "__main__":
     print(f"Ana rapor (Append):       {main_report_path}")
     print(f"Oturum raporu (Müstakil): {session_report_path}")
     
-    # Train, Test ve Val sonuçları raporda ayrı bölümlere yazılır.
-    splits = ["train", "test", "val"]
-    
-    for split in splits:
+    # Her split ayrı rapor bölümü olarak yazılır.
+    for split in args.splits:
         print(f"\n==================== STARTING PHASE: {split.upper()} ====================")
         im_path = os.path.join(base, f"{split}/images")
         masks_path = os.path.join(base, f"{split}/masks")
 
-        # sample_size=None vererek tüm veri setini işlemesini sağlıyoruz
         evaluate_dataset(
             im_path,
             masks_path,
-            sample_size=None,
-            low_score_threshold=0.20,
-            save_topological_masks=SAVE_TOPOLOGICAL_MASKS,
+            sample_size=args.sample_size,
+            low_score_threshold=args.low_score_threshold,
+            evaluate_baselines=not args.topology_only,
+            save_topological_masks=args.save_topological_masks,
             report_path=[main_report_path, session_report_path],
         )
         print(f"==================== COMPLETED PHASE: {split.upper()} ====================\n")
+
+
+if __name__ == "__main__":
+    main()

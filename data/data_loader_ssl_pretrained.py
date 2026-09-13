@@ -82,7 +82,11 @@ def loader(op,mode,sslmode,batch_size,num_workers,image_size,cutout_pr,cutout_bo
     else:
         raise ValueError(f"Unsupported dataset: {data}")
 
-    data_root = os.environ.get("ML_DATA_ROOT") or "/Users/input/data/ckatar/"
+    data_root = os.environ.get("ML_DATA_ROOT")
+    if not data_root:
+        raise EnvironmentError(
+            "ML_DATA_ROOT must point to the directory containing the datasets"
+        )
     dataset_root = os.path.join(data_root, foldernamepath)
 
     if not mode == "ssl_pretrained":

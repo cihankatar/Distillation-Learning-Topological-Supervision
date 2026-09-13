@@ -37,8 +37,12 @@ def setup_paths(data):
         os.environ.get(output_key)
         or os.environ.get("ML_DATA_OUTPUT_LOCAL")
         or os.environ.get("ML_DATA_OUTPUT")
-        or "/Users/output/ckatar/output/"
     )
+    if not base_path:
+        raise EnvironmentError(
+            "ML_DATA_OUTPUT (or ML_DATA_OUTPUT_LOCAL) must point to the "
+            "checkpoint output directory"
+        )
     folder_path = os.path.join(base_path, folder)
     os.makedirs(folder_path, exist_ok=True)
     return folder_path
@@ -70,8 +74,10 @@ def main():
     ssl_config    = " ".join(ssl_config)
     ssl_config    = "[" + ssl_config + f"]_segloss_True_{data}"
 
-    wandb_key = os.environ.get("WANDB_API_KEY") or "d909071ecea56786a3534173c984fd13b2a361bd"
-    wandb_dir = os.environ.get("WANDB_DIR") or "/Users/output/ckatar/"
+    # Credentials must never be embedded in source control. W&B also accepts
+    # credentials from the user's existing ``wandb login`` configuration.
+    wandb_key = os.environ.get("WANDB_API_KEY")
+    wandb_dir = os.environ.get("WANDB_DIR") or os.path.join(os.getcwd(), "wandb")
     config    = wandb_init(wandb_key, wandb_dir, args, data, dinowithsegloss, seed=seed)
 
     # Data Loaders

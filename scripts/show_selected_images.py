@@ -9,7 +9,11 @@ from glob import glob
 from pathlib import Path
 
 # Veri seti yolu
-data_root = os.environ.get("ML_DATA_ROOT", "/Users/input/data/ckatar/")
+data_root = os.environ.get("ML_DATA_ROOT")
+if not data_root:
+    raise EnvironmentError(
+        "ML_DATA_ROOT must point to the directory containing the datasets"
+    )
 dataset_name = "isic_2018_1"
 train_im_dir = os.path.join(data_root, dataset_name, "train/images")
 train_mask_dir = os.path.join(data_root, dataset_name, "train/masks")

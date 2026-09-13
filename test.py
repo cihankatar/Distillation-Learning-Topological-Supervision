@@ -62,7 +62,7 @@ SEEDS = [100, 200, 300]
 
 # RUN_ALL = False ise sadece bu listedeki modeller test edilir:
 SPECIFIC_CHECKPOINTS = [
-    # "/Users/output/ckatar/output/isic_1/downstream/ATTNext[op=train mode=ssl_pretrained sslmode_modelname=Dino imnetpr=True bsize=8 epochs=503 imsize=256 lrate=0.0001 aug=True shuffle=True sratio=0.1 workers=2 cutoutpr=0.5 cutoutbox=25 cutmixpr=0 (1).5 noclasses=1]_seed_200",
+    # "/absolute/path/to/an/ATTNext_checkpoint_seed_200",
 ]
 
 # Eksik model varsa durmadan mevcut olanlarla devam etsin:
@@ -71,18 +71,23 @@ ALLOW_MISSING = True
 # Bir model hata verirse diğerlerine devam etsin:
 CONTINUE_ON_ERROR = True
 
-# Dizin Yolları:
-CHECKPOINT_DIR = "/Users/output/ckatar/output/isic_1/downstream"
-DATA_ROOT = "/Users/input/data/ckatar/"
+# Dizin Yolları (ortam değişkenleri komut satırından da değiştirilebilir):
+_OUTPUT_ROOT = Path(
+    os.environ.get("ML_DATA_OUTPUT")
+    or os.environ.get("ML_DATA_OUTPUT_LOCAL")
+    or Path.cwd() / "checkpoints"
+)
+CHECKPOINT_DIR = str(_OUTPUT_ROOT / "isic_1")
+DATA_ROOT = os.environ.get("ML_DATA_ROOT", str(Path.cwd() / "data"))
 DATASET = "isic_2018_1"
 TEST_DATASET = "isic_2018_1"
 
-# Rapor Klasörü: Topo klasörü altına doğrudan kaydedilecek
-TOPO_DIR = Path("/Users/cihankatar/Desktop/PhD/Topo")
-REPORT_DIR = TOPO_DIR / "reports"
+# Raporlar varsayılan olarak depo içindeki (Git tarafından yok sayılan) dizine yazılır.
+TOPO_DIR = Path(os.environ.get("TOPODISTILL_MANUSCRIPT_DIR", Path.cwd()))
+REPORT_DIR = Path.cwd() / "reports"
 
 # Topo/main.tex içindeki Table 3 otomatik güncellensin mi?
-UPDATE_MAIN_TEX = True
+UPDATE_MAIN_TEX = False
 MAIN_TEX_PATH = TOPO_DIR / "main.tex"
 
 # Model & Donanım Parametreleri:
@@ -279,7 +284,7 @@ def default_checkpoint_dir(dataset):
     base = (
         os.environ.get("ML_DATA_OUTPUT")
         or os.environ.get("ML_DATA_OUTPUT_LOCAL")
-        or "/Users/output/ckatar/output"
+        or Path.cwd() / "checkpoints"
     )
     return Path(base) / OUTPUT_FOLDERS.get(dataset, dataset)
 
